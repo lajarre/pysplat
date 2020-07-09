@@ -4,6 +4,7 @@ from pathlib import Path
 import os
 import subprocess
 import re
+import shutil
 import tempfile
 from typing import Union, NamedTuple, Tuple
 from typing_extensions import Literal
@@ -152,81 +153,94 @@ def splat_report_values(
     transmitter: Transmitter,
     receiver: Receiver,
     timeout=2,
+    keep_directory=False,
 ) -> Tuple[FreeSpacePathLossDecibels, IWOTMPathLossDecibels, FieldStrengthDBuV]:
     """
     :raise: TimeoutExpired in case the subprocess takes too long
     :raise: SplatReportException in case the Splat report doesn't look as expected
     """
-    with tempfile.TemporaryDirectory() as tmpdirname:
-        tmpdir_path = Path(tmpdirname)
-        transmitter_qth_path = tmpdir_path / f"transmitter-{transmitter.name}.qth"
-        transmitter_lrp_path = tmpdir_path / f"transmitter-{transmitter.name}.lrp"
-        receiver_qth_path = tmpdir_path / f"receiver-{receiver.name}.qth"
+    tmpdir = (  # better use tempfile.TemporaryDirectory()
+        f"/tmp/{transmitter.name}-{receiver.name}"
+    )
+    os.mkdir(tmpdir)
+    tmpdir_path = Path(tmpdir)
+    transmitter_qth_path = tmpdir_path / f"transmitter-{transmitter.name}.qth"
+    transmitter_lrp_path = tmpdir_path / f"transmitter-{transmitter.name}.lrp"
+    receiver_qth_path = tmpdir_path / f"receiver-{receiver.name}.qth"
 
-        with transmitter_qth_path.open(
-            "w"
-        ) as transmitter_qth_file, transmitter_lrp_path.open(
-            "w"
-        ) as transmitter_lrp_file, receiver_qth_path.open(
-            "w"
-        ) as receiver_qth_file:
-            transmitter_qth_file.write(
-                QTH_TEMPLATE.format(**transmitter.to_qthfields()._asdict())
-            )
-            transmitter_lrp_file.write(
-                LRP_TEMPLATE.format(**transmitter.to_lrpfields()._asdict())
-            )
-            receiver_qth_file.write(
-                QTH_TEMPLATE.format(**receiver.to_qthfields()._asdict())
-            )
-
-        args = [
-            "splat",
-            "-metric",
-            "-s",
-            f"{cities_filepath}",
-            "-d",
-            f"{terrain_folder}",
-            "-t",
-            str(transmitter_qth_path),
-            "-r",
-            str(receiver_qth_path),
-        ]
-        subprocess.run(
-            args,
-            cwd=str(tmpdir_path),
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            universal_newlines=True,
-            check=True,
-            timeout=timeout,
+    with transmitter_qth_path.open(
+        "w"
+    ) as transmitter_qth_file, transmitter_lrp_path.open(
+        "w"
+    ) as transmitter_lrp_file, receiver_qth_path.open(
+        "w"
+    ) as receiver_qth_file:
+        transmitter_qth_file.write(
+            QTH_TEMPLATE.format(**transmitter.to_qthfields()._asdict())
+        )
+        transmitter_lrp_file.write(
+            LRP_TEMPLATE.format(**transmitter.to_lrpfields()._asdict())
+        )
+        receiver_qth_file.write(
+            QTH_TEMPLATE.format(**receiver.to_qthfields()._asdict())
         )
 
-        output_path = tmpdir_path / REPORT_FILENAME_TEMPLATE.format(
-            transmitter=transmitter, receiver=receiver
-        )
-        # Encoding copied from Splat gnuplot files:
-        with open(str(output_path), encoding="iso_8859_1") as report_file:
-            report_text = report_file.read()
-            matches = re.search(
-                r"Free space path loss: (\d*\.\d*) dB"
-                r".*?"
-                r"ITWOM Version 3.0 path loss: (\d*\.\d*) dB"
-                r".*?"
-                r"(\d*\.\d*) dBuV/meter",
-                report_text,
-                flags=re.DOTALL,
-            )
-            if matches:
-                return (
-                    Decimal(matches.group(1)),
-                    Decimal(matches.group(2)),
-                    Decimal(matches.group(3)),
-                )
+    args = [
+        "splat",
+        "-metric",
+        "-s",
+        f"{cities_filepath}",
+        "-d",
+        f"{terrain_folder}",
+        "-t",
+        str(transmitter_qth_path),
+        "-r",
+        str(receiver_qth_path),
+    ]
+    subprocess.run(
+        args,
+        cwd=str(tmpdir_path),
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        universal_newlines=True,
+        check=True,
+        timeout=timeout,
+    )
 
+    output_path = tmpdir_path / REPORT_FILENAME_TEMPLATE.format(
+        transmitter=transmitter, receiver=receiver
+    )
+
+    result = None
+    # Encoding copied from Splat gnuplot files:
+    with open(str(output_path), encoding="iso_8859_1") as report_file:
+        report_text = report_file.read()
+        matches = re.search(
+            r"Free space path loss: (\d*\.\d*) dB"
+            r".*?"
+            r"ITWOM Version 3.0 path loss: (\d*\.\d*) dB"
+            r".*?"
+            r"(\d*\.\d*) dBuV/meter",
+            report_text,
+            flags=re.DOTALL,
+        )
+        if matches:
+            result = (
+                Decimal(matches.group(1)),
+                Decimal(matches.group(2)),
+                Decimal(matches.group(3)),
+            )
+
+    if not keep_directory:
+        shutil.rmtree(tmpdir)
+    else:
+        print("tmp dir:", tmpdir)
+
+    if result is None:
         raise SplatReportException(
             "Error reading splat report", report_text=report_text
         )
+    return result
 
 
 def test1():
