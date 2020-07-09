@@ -130,7 +130,8 @@ QTH_TEMPLATE = "\n".join(
 
 LRP_TEMPLATE = "\n".join(
     [
-        "{earth_dielectric_constant}	; Earth Dielectric Constant (Relative permittivity)",
+        "{earth_dielectric_constant}	; Earth Dielectric Constant (Relative"
+        " permittivity)",
         "{earth_conductivity}; Earth Conductivity (Siemens per meter)",
         "{atmospheric_bending_constant}	; Atmospheric Bending Constant (N-Units)",
         "{frequency_MHz}	; Frequency in MHz (20 MHz to 20 GHz)",
@@ -194,7 +195,8 @@ def splat_report_values(
         subprocess.run(
             args,
             cwd=str(tmpdir_path),
-            capture_output=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
             universal_newlines=True,
             check=True,
             timeout=timeout,
